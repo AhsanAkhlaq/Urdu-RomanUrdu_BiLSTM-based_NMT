@@ -1,0 +1,302 @@
+# preprocess_bpe_from_scratch.py
+import re
+import random
+from collections import Counter, defaultdict
+from pathlib import Path
+import torch
+import time
+
+# ---------- Config ----------
+ROOT = Path("dataset/parallel")
+SRC_FILE = ROOT / "src.txt"
+TGT_FILE = ROOT / "tgt_normalized.txt"  # fallback to tgt.txt if not present
+FALLBACK_TGT = ROOT / "tgt.txt"
+
+NUM_MERGES = 4000          # recommended: 4000 (you can reduce for speed)
+SEED = 42
+TRAIN_RATIO = 0.5
+VAL_RATIO = 0.25
+TEST_RATIO = 0.25
+
+SPECIAL_TOKENS = ["<pad>", "<sos>", "<eos>", "<unk>"]  # will be assigned ids 0..3
+# ----------------------------
+
+random.seed(SEED)
+torch.manual_seed(SEED)
+
+# ---------- Utilities ----------
+def read_lines(path: Path):
+    if not path.exists():
+        return []
+    text = path.read_text(encoding="utf-8", errors="ignore")
+    # normalize whitespace, rstrip
+    lines = [re.sub(r'\s+', ' ', ln).strip() for ln in text.splitlines() if ln.strip()]
+    return lines
+
+def build_word_freqs(lines):
+    """Return Counter of words from list of lines."""
+    freqs = Counter()
+    for ln in lines:
+        for w in ln.split():
+            freqs[w] += 1
+    return freqs
+
+# ---------- BPE training (from scratch) ----------
+def get_stats(vocab):
+    """Count frequency of adjacent symbol pairs in vocab.
+    vocab: dict mapping 's y m b o l </w>' -> freq
+    """
+    pairs = Counter()
+    for word, freq in vocab.items():
+        symbols = word.split()
+        for i in range(len(symbols) - 1):
+            pairs[(symbols[i], symbols[i+1])] += freq
+    return pairs
+
+def merge_vocab(pair, vocab):
+    """Merge the given pair in all vocab entries. Return new vocab."""
+    a, b = pair
+    new_symbol = a + b
+    merged_vocab = {}
+    key = ' '.join(pair)
+    for word, freq in vocab.items():
+        # Replace occurrences of 'a b' with 'ab'
+        # using simple str.replace is safe because tokens are space-separated
+        new_word = word.replace(key, new_symbol)
+        merged_vocab[new_word] = freq
+    return merged_vocab
+
+def train_bpe_from_wordfreq(word_freqs, num_merges):
+    """
+    word_freqs: Counter mapping word -> frequency (words are plain strings)
+    Returns:
+      merges: list of tuple merges (('a','b'), ...)
+      vocab: final vocab mapping 'token token ... </w>' -> freq
+    """
+    # initialize vocab: character separated with end of word marker
+    vocab = {}
+    for word, freq in word_freqs.items():
+        tokenized = ' '.join(list(word)) + ' </w>'
+        vocab[tokenized] = freq
+
+    merges = []
+    start_time = time.time()
+    for i in range(num_merges):
+        pairs = get_stats(vocab)
+        if not pairs:
+            print(f"Stopping early at {i} merges (no more pairs).")
+            break
+        best = max(pairs, key=pairs.get)
+        merges.append(best)
+        vocab = merge_vocab(best, vocab)
+        if (i + 1) % 100 == 0 or i < 10:
+            elapsed = time.time() - start_time
+            print(f"[BPE] Merge {i+1}/{num_merges}: merged {best}, elapsed {elapsed:.1f}s")
+    print(f"[BPE] Training finished: {len(merges)} merges, total time {time.time()-start_time:.1f}s")
+    return merges, vocab
+
+# ---------- Encoding using learned merges ----------
+def build_merge_ranks(merges):
+    """Create a dict mapping pair tuple -> rank (lower rank = earlier merge)."""
+    return {pair: idx for idx, pair in enumerate(merges)}
+
+def encode_word_bpe(word, merge_ranks):
+    """Encode a single word using merge ranks (iteratively merge best-ranked pair)."""
+    symbols = list(word) + ['</w>']
+    # convert to list of strings
+    symbols = [s for s in symbols]
+    while True:
+        pairs = [(symbols[i], symbols[i+1]) for i in range(len(symbols) - 1)]
+        candidate_positions = []
+        for idx, p in enumerate(pairs):
+            if p in merge_ranks:
+                candidate_positions.append((merge_ranks[p], idx, p))
+        if not candidate_positions:
+            break
+        # pick the pair with smallest rank (earliest learned merge)
+        candidate_positions.sort()
+        _, pos, pair = candidate_positions[0]
+        # merge at pos
+        a, b = pair
+        merged = a + b
+        symbols = symbols[:pos] + [merged] + symbols[pos+2:]
+    # tokens may include '</w>' or '...'</w>' endings
+    return symbols
+
+def encode_sentence_bpe(sentence, merge_ranks):
+    tokens = []
+    for w in sentence.strip().split():
+        pieces = encode_word_bpe(w, merge_ranks)
+        for p in pieces:
+            if p == '</w>':
+                continue
+            # remove trailing '</w>' if merged into a token like 'ab</w>'
+            if p.endswith('</w>'):
+                p = p.replace('</w>', '')
+            if p:
+                tokens.append(p)
+    return tokens
+
+# ---------- Build token vocabulary from final BPE vocab ----------
+def build_token_set_from_vocab(final_vocab):
+    tokens = set()
+    for word_repr in final_vocab.keys():
+        for t in word_repr.split():
+            if t == '</w>':
+                continue
+            if t.endswith('</w>'):
+                t = t.replace('</w>', '')
+            if t:
+                tokens.add(t)
+    return tokens
+
+def build_token2id(tokens):
+    token2id = {}
+    # special tokens first
+    for i, st in enumerate(SPECIAL_TOKENS):
+        token2id[st] = i
+    next_id = len(SPECIAL_TOKENS)
+    for tok in sorted(tokens):
+        if tok in token2id:
+            continue
+        token2id[tok] = next_id
+        next_id += 1
+    return token2id
+
+# ---------- Prepare data tensors & save ----------
+def pad_sequences(list_of_id_lists, pad_id):
+    lengths = [len(x) for x in list_of_id_lists]
+    max_len = max(lengths) if lengths else 0
+    batch_size = len(list_of_id_lists)
+    tensor = torch.full((batch_size, max_len), pad_id, dtype=torch.long)
+    for i, seq in enumerate(list_of_id_lists):
+        if len(seq) > 0:
+            tensor[i, :len(seq)] = torch.tensor(seq, dtype=torch.long)
+    return tensor, torch.tensor(lengths, dtype=torch.long)
+
+def save_split(split_name, src_id_seqs, tgt_id_seqs, src_token2id, tgt_token2id, merges_src, merges_tgt, out_dir):
+    pad_id = src_token2id["<pad>"]
+    src_tensor, src_lengths = pad_sequences(src_id_seqs, pad_id)
+    pad_id_t = tgt_token2id["<pad>"]
+    tgt_tensor, tgt_lengths = pad_sequences(tgt_id_seqs, pad_id_t)
+
+    output = {
+        "src": src_tensor,
+        "src_lengths": src_lengths,
+        "tgt": tgt_tensor,
+        "tgt_lengths": tgt_lengths,
+        "src_token2id": src_token2id,
+        "tgt_token2id": tgt_token2id,
+        "merges_src": merges_src,
+        "merges_tgt": merges_tgt
+    }
+    path = out_dir / f"{split_name}.pt"
+    torch.save(output, path)
+    print(f"Saved {split_name} to {path} | src shape {src_tensor.shape} tgt shape {tgt_tensor.shape}")
+
+# ---------- MAIN pipeline ----------
+def main():
+    # 1) Read files
+    print("Reading files...")
+    src_lines = read_lines(SRC_FILE)
+    tgt_lines = read_lines(TGT_FILE) or read_lines(FALLBACK_TGT)
+    if not src_lines or not tgt_lines:
+        raise SystemExit("Source or target files not found or empty. Check paths.")
+    if len(src_lines) != len(tgt_lines):
+        print("Warning: source/target line counts differ. Pairing up to min length.")
+        n = min(len(src_lines), len(tgt_lines))
+        src_lines = src_lines[:n]
+        tgt_lines = tgt_lines[:n]
+    print(f"Total sentence pairs: {len(src_lines)}")
+
+    # 2) Build word frequency
+    print("Building word frequencies...")
+    src_word_freqs = build_word_freqs(src_lines)
+    tgt_word_freqs = build_word_freqs(tgt_lines)
+    print(f"Unique words - src: {len(src_word_freqs)} tgt: {len(tgt_word_freqs)}")
+
+    # 3) Train BPE on source & target
+    print("Training BPE for source (urdu)...")
+    merges_src, final_vocab_src = train_bpe_from_wordfreq(src_word_freqs, NUM_MERGES)
+    print("Training BPE for target (roman)...")
+    merges_tgt, final_vocab_tgt = train_bpe_from_wordfreq(tgt_word_freqs, NUM_MERGES)
+
+    # 4) Build token sets & token2id
+    print("Building token sets...")
+    src_tokens = build_token_set_from_vocab(final_vocab_src)
+    tgt_tokens = build_token_set_from_vocab(final_vocab_tgt)
+    print(f"Final src token count (excl specials): {len(src_tokens)}")
+    print(f"Final tgt token count (excl specials): {len(tgt_tokens)}")
+
+    src_token2id = build_token2id(src_tokens)
+    tgt_token2id = build_token2id(tgt_tokens)
+
+    # 5) Encode all sentences
+    print("Encoding sentences to BPE tokens/ids...")
+    src_merge_ranks = build_merge_ranks(merges_src)
+    tgt_merge_ranks = build_merge_ranks(merges_tgt)
+
+    src_id_seqs = []
+    tgt_id_seqs = []
+    unk_src = src_token2id["<unk>"]
+    unk_tgt = tgt_token2id["<unk>"]
+    sos_tgt = tgt_token2id["<sos>"]
+    eos_tgt = tgt_token2id["<eos>"]
+    sos_src = src_token2id["<sos>"]
+    eos_src = src_token2id["<eos>"]
+
+    for s, t in zip(src_lines, tgt_lines):
+        s_tokens = encode_sentence_bpe(s, src_merge_ranks)
+        t_tokens = encode_sentence_bpe(t, tgt_merge_ranks)
+
+        # convert to ids, add <sos>/<eos>
+        s_ids = [src_token2id.get(tok, unk_src) for tok in s_tokens]
+        t_ids = [tgt_token2id.get(tok, unk_tgt) for tok in t_tokens]
+
+        # add SOS/EOS (we add to both for convenience; training loop can decide usage)
+        s_ids = [sos_src] + s_ids + [eos_src]
+        t_ids = [sos_tgt] + t_ids + [eos_tgt]
+
+        src_id_seqs.append(s_ids)
+        tgt_id_seqs.append(t_ids)
+
+    n_total = len(src_id_seqs)
+    indices = list(range(n_total))
+    random.shuffle(indices)
+
+    # 6) Split
+    n_train = int(TRAIN_RATIO * n_total)
+    n_val = int(VAL_RATIO * n_total)
+    n_test = n_total - n_train - n_val
+    train_idx = indices[:n_train]
+    val_idx = indices[n_train:n_train+n_val]
+    test_idx = indices[n_train+n_val:]
+
+    out_dir = ROOT
+    print(f"Splitting: train={len(train_idx)}, val={len(val_idx)}, test={len(test_idx)}")
+
+    def collect(idx_list):
+        return [src_id_seqs[i] for i in idx_list], [tgt_id_seqs[i] for i in idx_list]
+
+    train_src, train_tgt = collect(train_idx)
+    val_src, val_tgt = collect(val_idx)
+    test_src, test_tgt = collect(test_idx)
+
+    # 7) Save .pt files
+    save_split("train", train_src, train_tgt, src_token2id, tgt_token2id, merges_src, merges_tgt, out_dir)
+    save_split("val", val_src, val_tgt, src_token2id, tgt_token2id, merges_src, merges_tgt, out_dir)
+    save_split("test", test_src, test_tgt, src_token2id, tgt_token2id, merges_src, merges_tgt, out_dir)
+
+    # Also save basic metadata
+    meta = {
+        "num_total": n_total,
+        "num_train": len(train_idx),
+        "num_val": len(val_idx),
+        "num_test": len(test_idx),
+        "num_merges": len(merges_src),
+    }
+    torch.save(meta, out_dir / "metadata.pt")
+    print("Preprocessing finished. Files saved to:", out_dir)
+
+if __name__ == "__main__":
+    main()

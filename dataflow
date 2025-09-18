@@ -1,0 +1,54 @@
+                ┌─────────────────────────────────────────────┐
+                │                 Training Data               │
+                │  Urdu sentence:  "محبت ہے"                  │
+                │  Roman target:   "mohabbat hai"             │
+                └─────────────────────────────────────────────┘
+
+Step 1: Tokenization
+    Urdu:   <sos> _محبت _ہے <eos>  → [0, 42, 17, 2]
+    Roman:  <sos> mohabbat_ hai_ <eos> → [0, 91, 27, 2]
+
+Step 2: Embedding lookup
+    [0, 42, 17, 2] → 
+    [
+      [0.1, -0.3, 0.4, …],    # <sos>
+      [0.7, -0.2, 0.05, …],   # _محبت
+      [0.6, -0.5, 0.3, …],    # _ہے
+      [0.2, 0.8, -0.1, …]     # <eos>
+    ]
+
+Step 3: Encoder (BiLSTM)
+    - Processes embeddings from both directions
+    - Produces hidden states representing full Urdu sentence
+
+Step 4: Decoder (LSTM with attention, if used)
+    - Takes previous Roman token embedding (starting with <sos>)
+    - Uses encoder hidden state as context
+    - Predicts next token (e.g. "mohabbat_")
+
+Step 5: Output projection
+    - Decoder hidden state → linear layer → softmax over vocab
+    - Argmax (or beam search) picks predicted Roman subword
+
+Step 6: Training objective
+    - Compare predicted sequence vs gold target
+    - Use Cross-Entropy loss
+    - Update embeddings + LSTM weights together
+
+
+
+Urdu Sentence ("محبت ہے")
+       ↓ (tokenize)
+IDs: [<sos>, _محبت, _ہے, <eos>]
+       ↓ (nn.Embedding lookup)
+Vectors: [ [..256d..], [..], [..], [..] ]
+       ↓
+  BiLSTM Encoder
+       ↓
+ Context vector(s)  ----------------┐
+                                    ↓
+Roman Decoder LSTM  <─── Embeddings [<sos>, mohabbat_, hai_, <eos>]
+       ↓
+Hidden states → Linear + Softmax → Predicted IDs
+       ↓
+Convert back to tokens → "mohabbat hai"
