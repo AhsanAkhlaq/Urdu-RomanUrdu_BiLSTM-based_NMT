@@ -1,13 +1,6 @@
 import streamlit as st
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import json
-import numpy as np
-from nltk.translate.bleu_score import sentence_bleu, SmoothingFunction
-import Levenshtein
-import math
-
 # Set page config
 st.set_page_config(
     page_title="Urdu to Roman Urdu Translator",
@@ -131,22 +124,7 @@ def decode_tokens(tokens, id2token):
     text = ' '.join(text.split())
     return text
 
-def calculate_bleu(reference, hypothesis):
-    """Calculate BLEU score"""
-    if not reference or not hypothesis:
-        return 0.0
-    reference_tokens = reference.split()
-    hypothesis_tokens = hypothesis.split()
-    if len(hypothesis_tokens) == 0:
-        return 0.0
-    smoothie = SmoothingFunction().method4
-    return sentence_bleu([reference_tokens], hypothesis_tokens, smoothing_function=smoothie)
 
-def calculate_cer(reference, hypothesis):
-    """Calculate Character Error Rate"""
-    if len(reference) == 0:
-        return 1.0 if len(hypothesis) > 0 else 0.0
-    return Levenshtein.distance(reference, hypothesis) / len(reference)
 
 # Cached functions for loading resources
 @st.cache_resource
