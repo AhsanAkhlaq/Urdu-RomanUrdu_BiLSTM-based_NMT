@@ -42,7 +42,7 @@ We experimented with:
 | **M1 (Baseline)** | BiLSTM Encoder (2L, 128) → LSTM Decoder (4L, hidden=256) | **3.0586** | **21.2971** | **0.2745** | **0.3691** | – | First working model; intuition of feeding `src` into decoder started here. |
 | **M2 (Best)** | BiLSTM Encoder (2L, 128) → LSTM Decoder (4L, hidden=256) with projection & src fed to decoder | **2.0089** | **7.4549** | **0.4518** | **0.1949** | **10.96** | Freezing encoder, deeper decoder. Best generalization & performance. |
 | **M3** | BiLSTM Encoder (2L, 128) → LSTM Decoder (4L, hidden=256) with concat states | **2.0439** | **7.7209** | **0.3836** | **0.2742** | **14.85** | Stable training but lower BLEU vs M2. |
-| **M4** | BiLSTM Encoder (2L, 256) → LSTM Decoder (3L, hidden=256) | ~**2.10** | ~**8.10** | ~**0.36** | ~**0.28** | – | Larger embedding, but weaker decoder depth → worse results. |
+| **M4** | BiLSTM Encoder (2L, 256) → LSTM Decoder (3L, hidden=256) | ~**2.04** | ~**7.71** | **0.44** | **0.22** | 11.84 | Larger embedding, but weaker decoder depth → worse results. |
 
 ---
 
@@ -84,12 +84,5 @@ Through multiple experiments, we concluded that:
 - The final **M2 model** achieved **BLEU = 0.45** and **CER = 0.19**, proving effective for low-resource poetic text.
 - Deployed via **Streamlit** for real-time usage.
 
----
-
-## 📎 Deliverables
-- Preprocessing, training, and evaluation code.
-- Full model comparison.
-- Final deployed model with **Streamlit app**.
-- This **README.md report** as submission summary.
 
 ---
