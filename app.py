@@ -41,29 +41,26 @@ class Decoder(nn.Module):
         self.h_projection = nn.Linear(256, hidden_dim)  # 256 from bidirectional encoder
         self.c_projection = nn.Linear(256, hidden_dim)
 
-    def forward(self, x, encoder_states=None):
+    def forward(self, x, encoder_states):
         embedded = self.embedding(x)
         embedded = self.dropout(embedded)
 
-        if encoder_states is not None:
-            h_enc, c_enc = encoder_states
-            # Convert bidirectional encoder states to decoder format
-            # h_enc: [num_layers*2, batch, hidden_dim] -> [num_layers, batch, hidden_dim*2]
-            batch_size = h_enc.size(1)
-            h_enc = h_enc.view(2, 2, batch_size, -1)  # [directions, layers, batch, hidden]
-            c_enc = c_enc.view(2, 2, batch_size, -1)
+        h_enc, c_enc = encoder_states
+        # Convert bidirectional encoder states to decoder format
+        # h_enc: [num_layers*2, batch, hidden_dim] -> [num_layers, batch, hidden_dim*2]
+        batch_size = h_enc.size(1)
+        h_enc = h_enc.view(2, 2, batch_size, -1)  # [directions, layers, batch, hidden]
+        c_enc = c_enc.view(2, 2, batch_size, -1)
 
-            # Concatenate forward and backward states
-            h_enc = torch.cat([h_enc[0], h_enc[1]], dim=-1)  # [layers, batch, hidden*2]
-            c_enc = torch.cat([c_enc[0], c_enc[1]], dim=-1)
+        # Concatenate forward and backward states
+        h_enc = torch.cat([h_enc[0], h_enc[1]], dim=-1)  # [layers, batch, hidden*2]
+        c_enc = torch.cat([c_enc[0], c_enc[1]], dim=-1)
 
-            # Project to decoder dimensions and repeat for all decoder layers
-            h_init = self.h_projection(h_enc[-1]).unsqueeze(0).repeat(self.num_layers, 1, 1)
-            c_init = self.c_projection(c_enc[-1]).unsqueeze(0).repeat(self.num_layers, 1, 1)
+        # Project to decoder dimensions and repeat for all decoder layers
+        h_init = self.h_projection(h_enc[-1]).unsqueeze(0).repeat(self.num_layers, 1, 1)
+        c_init = self.c_projection(c_enc[-1]).unsqueeze(0).repeat(self.num_layers, 1, 1)
 
-            initial_state = (h_init, c_init)
-        else:
-            initial_state = None
+        initial_state = (h_init, c_init)
 
         output, _ = self.lstm(embedded, initial_state)
         output = self.linear(output)
