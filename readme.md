@@ -75,6 +75,7 @@ A **Streamlit application** was built around **M2**:
 - Output: Roman Urdu transliteration
 - Side-by-side comparison with ground truth (for demo/testing)
 - Lightweight UI for deployment
+<img width="1876" height="745" alt="image" src="https://github.com/user-attachments/assets/04eb98d1-aaa9-407c-9c28-8ed17861e718" />
 
 ---
 
