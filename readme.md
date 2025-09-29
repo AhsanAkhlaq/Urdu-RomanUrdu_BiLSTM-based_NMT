@@ -16,7 +16,7 @@ Evaluation metrics include:
 - **Steps performed**:
   - Urdu text cleaning and normalization.
   - Vocabulary optimized to **512 tokens** using **Byte Pair Encoding (BPE)** → improved generalization and reduced OOV.
-  - Train/Validation/Test split: **50% / 25% / 25%**.
+  - Train/Validation/Test split: **70% / 15% / 15%**.
 
 ---
 
