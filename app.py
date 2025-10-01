@@ -1,12 +1,16 @@
 import streamlit as st
 import torch
 import torch.nn as nn
+
 # Set page config
 st.set_page_config(
     page_title="Urdu to Roman Urdu Translator",
     page_icon="🔤",
     layout="wide"
 )
+
+# Constants
+MAX_LENGTH = 50
 
 # Model classes (same as your training code)
 class Encoder(nn.Module):
@@ -80,8 +84,8 @@ class Seq2SeqModel(nn.Module):
         return dec_output
 
 # Tokenization functions
-def encode_sentence(sentence, token2id, is_urdu=True):
-    """Encode a sentence using greedy longest-match subword tokenization."""
+def encode_sentence(sentence, token2id, is_urdu=True, max_length=MAX_LENGTH):
+    """Encode a sentence using greedy longest-match subword tokenization and pad to max_length."""
     tokens = []
 
     if is_urdu:
@@ -105,7 +109,18 @@ def encode_sentence(sentence, token2id, is_urdu=True):
                 tokens.append(token2id[subword])
                 i += len(subword)
 
-    return [token2id.get("<sos>", 1)] + tokens + [token2id.get("<eos>", 2)]
+    # Add SOS and EOS tokens
+    encoded = [token2id.get("<sos>", 1)] + tokens + [token2id.get("<eos>", 2)]
+    
+    # Truncate if longer than max_length
+    if len(encoded) > max_length:
+        encoded = encoded[:max_length-1] + [token2id.get("<eos>", 2)]
+    
+    # Pad to exactly max_length with PAD token (0)
+    while len(encoded) < max_length:
+        encoded.append(0)  # PAD token
+    
+    return encoded
 
 def decode_tokens(tokens, id2token):
     """Convert token IDs back to text"""
@@ -120,7 +135,6 @@ def decode_tokens(tokens, id2token):
     # Remove extra spaces
     text = ' '.join(text.split())
     return text
-
 
 
 # Cached functions for loading resources
@@ -164,8 +178,8 @@ def load_model_and_vocabularies(model_path):
 def translate_text(text, model, vocab_urdu, vocab_roman, id2roman, device):
     """Translate Urdu text to Roman Urdu"""
     try:
-        # Encode the input text
-        encoded = encode_sentence(text, vocab_urdu, is_urdu=True)
+        # Encode the input text with padding to MAX_LENGTH
+        encoded = encode_sentence(text, vocab_urdu, is_urdu=True, max_length=MAX_LENGTH)
         
         # Convert to tensor and add batch dimension
         input_tensor = torch.tensor(encoded).unsqueeze(0).to(device)
@@ -206,7 +220,8 @@ def main():
         st.markdown("- Encoder: BiLSTM (2 layers)")
         st.markdown("- Decoder: LSTM (4 layers)")
         st.markdown("- Tokenization: BPE Subwords")
-        st.markdown("- Vocabularies: Loaded from model")
+        st.markdown(f"- Max Length: {MAX_LENGTH} tokens")
+        st.markdown("- Input: Padded to exact length")
         
         st.markdown("---")
         st.markdown("**Metrics:**")
@@ -223,11 +238,13 @@ def main():
     st.success(f"✅ Model and vocabularies loaded successfully on {device}")
     
     # Display vocabulary info
-    col_info1, col_info2 = st.columns(2)
+    col_info1, col_info2, col_info3 = st.columns(3)
     with col_info1:
         st.info(f"📚 Urdu vocabulary size: {len(vocab_urdu)}")
     with col_info2:
         st.info(f"🔤 Roman vocabulary size: {len(vocab_roman)}")
+    with col_info3:
+        st.info(f"📏 Max sequence length: {MAX_LENGTH}")
     
     # Main translation interface
     col1, col2 = st.columns(2)
@@ -298,23 +315,31 @@ def main():
                             
                             with col_a:
                                 st.markdown("**Input Tokens:**")
-                                st.write(f"Count: {len(encoded_tokens)}")
+                                st.write(f"Total Count: {len(encoded_tokens)} (padded to {MAX_LENGTH})")
+                                # Count non-padding tokens
+                                non_pad = sum(1 for t in encoded_tokens if t != 0)
+                                st.write(f"Non-padding: {non_pad}")
                                 # Show tokens in a more readable format
-                                token_display = [f"{i}: {id2urdu.get(token, '<unk>')}" for i, token in enumerate(encoded_tokens[:15])]
+                                token_display = [f"{i}: {id2urdu.get(token, '<unk>' if token != 0 else '<PAD>')}" 
+                                               for i, token in enumerate(encoded_tokens[:20])]
                                 for token_info in token_display:
                                     st.caption(token_info)
-                                if len(encoded_tokens) > 15:
-                                    st.caption(f"... and {len(encoded_tokens) - 15} more tokens")
+                                if len(encoded_tokens) > 20:
+                                    st.caption(f"... and {len(encoded_tokens) - 20} more tokens")
                             
                             with col_b:
                                 st.markdown("**Output Tokens:**")
-                                st.write(f"Count: {len(predicted_tokens)}")
+                                st.write(f"Total Count: {len(predicted_tokens)}")
+                                # Count non-padding tokens
+                                non_pad = sum(1 for t in predicted_tokens if t != 0)
+                                st.write(f"Non-padding: {non_pad}")
                                 # Show tokens in a more readable format
-                                token_display = [f"{i}: {id2roman.get(token, '<unk>')}" for i, token in enumerate(predicted_tokens[:15])]
+                                token_display = [f"{i}: {id2roman.get(token, '<unk>' if token != 0 else '<PAD>')}" 
+                                               for i, token in enumerate(predicted_tokens[:20])]
                                 for token_info in token_display:
                                     st.caption(token_info)
-                                if len(predicted_tokens) > 15:
-                                    st.caption(f"... and {len(predicted_tokens) - 15} more tokens")
+                                if len(predicted_tokens) > 20:
+                                    st.caption(f"... and {len(predicted_tokens) - 20} more tokens")
                 
                 else:
                     st.error("Translation failed. Please try again.")
@@ -323,25 +348,26 @@ def main():
     
     # Information section
     with st.expander("ℹ️ About This App"):
-        st.markdown("""
+        st.markdown(f"""
         This Neural Machine Translation system converts Urdu text to Roman Urdu using:
         
         **Architecture:**
         - **Encoder**: Bidirectional LSTM with 2 layers
         - **Decoder**: Unidirectional LSTM with 4 layers
         - **Tokenization**: BPE (Byte Pair Encoding) subwords
+        - **Sequence Length**: Fixed at {MAX_LENGTH} tokens (padded)
         
         **Features:**
         - Real-time translation
-        - Batch file processing
-        - Translation quality metrics (BLEU, CER)
+        - Fixed-length input sequences (padded to {MAX_LENGTH})
         - Token-level analysis
+        - Automatic truncation for long sentences
         
         **Usage Tips:**
         - For best results, use complete sentences
+        - Long sentences are automatically truncated to {MAX_LENGTH} tokens
+        - Short sentences are padded to exactly {MAX_LENGTH} tokens
         - The model works with BPE tokenization
-        - Vocabulary files should be in the correct directory
-        - Model checkpoint should be properly trained
         """)
 
 if __name__ == "__main__":
