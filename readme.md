@@ -16,7 +16,7 @@ Evaluation metrics include:
 - **Steps performed**:
   - Urdu text cleaning and normalization.
   - Vocabulary optimized to **512 tokens** using **Byte Pair Encoding (BPE)** → improved generalization and reduced OOV.
-  - Train/Validation/Test split: **50% / 25% / 25%**.
+  - Train/Validation/Test split: **70% / 15% / 15%**.
 
 ---
 
@@ -75,7 +75,7 @@ A **Streamlit application** was built around **M2**:
 - Output: Roman Urdu transliteration
 - Side-by-side comparison with ground truth (for demo/testing)
 - Lightweight UI for deployment
-
+<img width="1876" height="745" alt="image" src="https://github.com/user-attachments/assets/04eb98d1-aaa9-407c-9c28-8ed17861e718" />(https://ahsanakhlaq-urdu-romanurdu-bilstm-based-nmt-app-zssugv.streamlit.app/)
 ---
 
 ## ✅ Conclusion
